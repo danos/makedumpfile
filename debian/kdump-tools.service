@@ -3,7 +3,7 @@ Description=Kernel crash dump capture service
 
 [Service]
 Type=oneshot
-StandardOutput=syslog+console
+StandardOutput=journal+console
 EnvironmentFile=/etc/default/kdump-tools
 ExecStart=/etc/init.d/kdump-tools start
 ExecStop=/etc/init.d/kdump-tools stop
