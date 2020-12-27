@@ -1,5 +1,0 @@
-debian/50-kdump-tools.rules /lib/udev/rules.d/
-debian/kdump-config	/usr/sbin
-debian/kdump-tools-dump.service /lib/systemd/system/
-debian/kdump-tools.conf /usr/share/kdump-tools/
-debian/sysctl.conf /etc/kdump/
