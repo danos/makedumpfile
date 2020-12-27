@@ -10,9 +10,7 @@ Build-Depends: debhelper-compat (= 12),
                libdw-dev (>= 0.141-2ubuntu1),
                libelf-dev,
                liblzo2-dev,
-               libz-dev,
-               po-debconf,
-               shellcheck <!nocheck>
+               libz-dev
 Vcs-Git: https://salsa.debian.org/debian/makedumpfile.git
 Vcs-Browser: https://salsa.debian.org/debian/makedumpfile
 Homepage: https://github.com/makedumpfile/makedumpfile
@@ -28,26 +26,3 @@ Description: VMcore extraction tool
  via /dev/mem or /proc/vmcore (for crashdumps). It is used to get memory
  images without extra unneeded information (zero pages, userspace programs,
  etc).
-
-Package: kdump-tools
-Architecture: amd64 arm64 armel armhf i386 ia64 powerpc ppc64el s390x x32
-Pre-Depends: ${misc:Pre-Depends}
-Depends: bsdextrautils | bsdmainutils,
-         busybox | busybox-static,
-         debconf,
-         file,
-         linux-base,
-         lsb-base (>= 3.0-6),
-         makedumpfile,
-         ucf,
-         ${dist:Depends},
-         ${misc:Depends},
-         ${shlibs:Depends}
-Recommends: initramfs-tools-core
-Description: scripts and tools for automating kdump (Linux crash dumps)
- kdump-tools provides an init script and a configuration script for
- automating the use of kdump.  It uses the makedumpfile utility to
- reduce the size of the /proc/vmcore file based on user preferences.
- .
- After installing, please see /usr/share/doc/kdump-tools/README.Debian
- for information on enabling and configuring kdump.

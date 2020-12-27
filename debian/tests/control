@@ -1,8 +1,0 @@
-Tests: crash
-Restrictions: breaks-testbed, needs-root, isolation-machine, needs-reboot
-Depends: file, initramfs-tools-core, @
-
-Test-Command: LC_ALL=C.UTF-8 shellcheck -e SC1090,SC1091 /etc/init.d/kdump-tools /etc/kernel/postrm.d/kdump-tools /usr/sbin/kdump-config $(find /usr/share/kdump-tools -type f -executable)
-Depends: shellcheck, @
-Restrictions: superficial
-Features: test-name=shellcheck
