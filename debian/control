@@ -1,7 +1,7 @@
 Source: makedumpfile
 Section: devel
 Priority: optional
-Maintainer: Louis Bouchard <louis.bouchard@ubuntu.com>
+Maintainer: Debian Kdump <team+kdump@tracker.debian.org>
 Uploaders: dann frazier <dannf@debian.org>,
            Thadeu Lima de Souza Cascardo <cascardo@debian.org>
 Standards-Version: 4.5.1
