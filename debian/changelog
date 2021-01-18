@@ -1,10 +1,10 @@
-makedumpfile (1:1.6.8-3) UNRELEASED; urgency=medium
+makedumpfile (1:1.6.8-3) unstable; urgency=medium
 
   * Drop kdump-tools, which has been split into its own source package.
   * Change maintainer to Debian Kdump team. Thanks to Louis Bouchard for
     all of his years of work maintaining this package!
 
- -- dann frazier <dannf@debian.org>  Sun, 27 Dec 2020 08:55:17 -0700
+ -- dann frazier <dannf@debian.org>  Mon, 18 Jan 2021 07:50:02 -0700
 
 makedumpfile (1:1.6.8-2) unstable; urgency=medium
 
