@@ -1,11 +1,12 @@
-makedumpfile (1:1.6.8-4) UNRELEASED; urgency=medium
+makedumpfile (1:1.6.8-4) unstable; urgency=medium
 
+  [ Ioanna Alifieraki ]
   * Fix failure of dmesg.<timestamp> creation on 5.10+ kernels.
     (Closes: #985896) (LP: #1921403). 
   * Fix makedumpfile failure on arm64 with 5.4 kernels.
     (Closes: #986594) (LP: #1879214)
 
- -- Ioanna Alifieraki <ioanna-maria.alifieraki@canonical.com>  Wed, 07 Apr 2021 21:02:18 +0100
+ -- dann frazier <dannf@debian.org>  Wed, 07 Apr 2021 16:32:38 -0600
 
 makedumpfile (1:1.6.8-3) unstable; urgency=medium
 
