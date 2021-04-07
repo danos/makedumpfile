@@ -1,3 +1,9 @@
+makedumpfile (1:1.6.8-4) UNRELEASED; urgency=medium
+
+  * Fix failure of dmesg.<timestamp> creation on 5.10+ kernels (Closes: #985896) (LP: #1921403). 
+
+ -- Ioanna Alifieraki <ioanna-maria.alifieraki@canonical.com>  Wed, 07 Apr 2021 18:00:50 +0100
+
 makedumpfile (1:1.6.8-3) unstable; urgency=medium
 
   * Drop kdump-tools, which has been split into its own source package.
