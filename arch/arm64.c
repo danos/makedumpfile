@@ -47,6 +47,8 @@ typedef struct {
 static int lpa_52_bit_support_available;
 static int pgtable_level;
 static int va_bits;
+static int vabits_actual;
+static int flipped_va;
 static unsigned long kimage_voffset;
 
 #define SZ_4K			4096
@@ -58,7 +60,6 @@ static unsigned long kimage_voffset;
 #define PAGE_OFFSET_42		((0xffffffffffffffffUL) << 42)
 #define PAGE_OFFSET_47		((0xffffffffffffffffUL) << 47)
 #define PAGE_OFFSET_48		((0xffffffffffffffffUL) << 48)
-#define PAGE_OFFSET_52		((0xffffffffffffffffUL) << 52)
 
 #define pgd_val(x)		((x).pgd)
 #define pud_val(x)		(pgd_val((x).pgd))
@@ -218,12 +219,20 @@ pmd_page_paddr(pmd_t pmd)
 #define pte_index(vaddr)		(((vaddr) >> PAGESHIFT()) & (PTRS_PER_PTE - 1))
 #define pte_offset(dir, vaddr)		(pmd_page_paddr((*dir)) + pte_index(vaddr) * sizeof(pte_t))
 
+/*
+ * The linear kernel range starts at the bottom of the virtual address
+ * space. Testing the top bit for the start of the region is a
+ * sufficient check and avoids having to worry about the tag.
+ */
+#define is_linear_addr(addr)	(flipped_va ?	\
+	(!((unsigned long)(addr) & (1UL << (vabits_actual - 1)))) : \
+	(!!((unsigned long)(addr) & (1UL << (vabits_actual - 1)))))
+
 static unsigned long long
 __pa(unsigned long vaddr)
 {
-	if (kimage_voffset == NOT_FOUND_NUMBER ||
-			(vaddr >= PAGE_OFFSET))
-		return (vaddr - PAGE_OFFSET + info->phys_base);
+	if (kimage_voffset == NOT_FOUND_NUMBER || is_linear_addr(vaddr))
+		return ((vaddr & ~PAGE_OFFSET) + info->phys_base);
 	else
 		return (vaddr - kimage_voffset);
 }
@@ -253,6 +262,7 @@ static int calculate_plat_config(void)
 			(PAGESIZE() == SZ_64K && va_bits == 42)) {
 		pgtable_level = 2;
 	} else if ((PAGESIZE() == SZ_64K && va_bits == 48) ||
+			(PAGESIZE() == SZ_64K && va_bits == 52) ||
 			(PAGESIZE() == SZ_4K && va_bits == 39) ||
 			(PAGESIZE() == SZ_16K && va_bits == 47)) {
 		pgtable_level = 3;
@@ -263,6 +273,7 @@ static int calculate_plat_config(void)
 				PAGESIZE(), va_bits);
 		return FALSE;
 	}
+	DEBUG_MSG("pgtable_level: %d\n", pgtable_level);
 
 	return TRUE;
 }
@@ -270,6 +281,9 @@ static int calculate_plat_config(void)
 unsigned long
 get_kvbase_arm64(void)
 {
+	if (flipped_va)
+		return PAGE_OFFSET;
+
 	return (0xffffffffffffffffUL << va_bits);
 }
 
@@ -345,22 +359,91 @@ get_stext_symbol(void)
 	return(found ? kallsym : FALSE);
 }
 
+static int
+get_va_bits_from_stext_arm64(void)
+{
+	ulong _stext;
+
+	_stext = get_stext_symbol();
+	if (!_stext) {
+		ERRMSG("Can't get the symbol of _stext.\n");
+		return FALSE;
+	}
+
+	/*
+	 * Derive va_bits as per arch/arm64/Kconfig. Note that this is a
+	 * best case approximation at the moment, as there can be
+	 * inconsistencies in this calculation (for e.g., for 52-bit
+	 * kernel VA case, the 48th bit is set in * the _stext symbol).
+	 */
+	if ((_stext & PAGE_OFFSET_48) == PAGE_OFFSET_48) {
+		va_bits = 48;
+	} else if ((_stext & PAGE_OFFSET_47) == PAGE_OFFSET_47) {
+		va_bits = 47;
+	} else if ((_stext & PAGE_OFFSET_42) == PAGE_OFFSET_42) {
+		va_bits = 42;
+	} else if ((_stext & PAGE_OFFSET_39) == PAGE_OFFSET_39) {
+		va_bits = 39;
+	} else if ((_stext & PAGE_OFFSET_36) == PAGE_OFFSET_36) {
+		va_bits = 36;
+	} else {
+		ERRMSG("Cannot find a proper _stext for calculating VA_BITS\n");
+		return FALSE;
+	}
+
+	DEBUG_MSG("va_bits       : %d (guess from _stext)\n", va_bits);
+
+	return TRUE;
+}
+
+static void
+get_page_offset_arm64(void)
+{
+	ulong page_end;
+	int vabits_min;
+
+	/*
+	 * See arch/arm64/include/asm/memory.h for more details of
+	 * the PAGE_OFFSET calculation.
+	 */
+	vabits_min = (va_bits > 48) ? 48 : va_bits;
+	page_end = -(1UL << (vabits_min - 1));
+
+	if (SYMBOL(_stext) > page_end) {
+		flipped_va = TRUE;
+		info->page_offset = -(1UL << vabits_actual);
+	} else {
+		flipped_va = FALSE;
+		info->page_offset = -(1UL << (vabits_actual - 1));
+	}
+
+	DEBUG_MSG("page_offset   : %lx (from page_end check)\n",
+		info->page_offset);
+}
+
 int
 get_machdep_info_arm64(void)
 {
-	/* Determine if the PA address range is 52-bits: ARMv8.2-LPA */
-	if (NUMBER(MAX_PHYSMEM_BITS) != NOT_FOUND_NUMBER) {
-		info->max_physmem_bits = NUMBER(MAX_PHYSMEM_BITS);
-		if (info->max_physmem_bits == 52)
-			lpa_52_bit_support_available = 1;
-	} else
-		info->max_physmem_bits = 48;
-
 	/* Check if va_bits is still not initialized. If still 0, call
 	 * get_versiondep_info() to initialize the same.
 	 */
 	if (!va_bits)
 		get_versiondep_info_arm64();
+
+	/* Determine if the PA address range is 52-bits: ARMv8.2-LPA */
+	if (NUMBER(MAX_PHYSMEM_BITS) != NOT_FOUND_NUMBER) {
+		info->max_physmem_bits = NUMBER(MAX_PHYSMEM_BITS);
+		DEBUG_MSG("max_physmem_bits : %ld (vmcoreinfo)\n", info->max_physmem_bits);
+		if (info->max_physmem_bits == 52)
+			lpa_52_bit_support_available = 1;
+	} else {
+		if (va_bits == 52)
+			info->max_physmem_bits = 52; /* just guess */
+		else
+			info->max_physmem_bits = 48;
+
+		DEBUG_MSG("max_physmem_bits : %ld (guess)\n", info->max_physmem_bits);
+	}
 
 	if (!calculate_plat_config()) {
 		ERRMSG("Can't determine platform config values\n");
@@ -371,7 +454,6 @@ get_machdep_info_arm64(void)
 	info->section_size_bits = SECTIONS_SIZE_BITS;
 
 	DEBUG_MSG("kimage_voffset   : %lx\n", kimage_voffset);
-	DEBUG_MSG("max_physmem_bits : %ld\n", info->max_physmem_bits);
 	DEBUG_MSG("section_size_bits: %ld\n", info->section_size_bits);
 
 	return TRUE;
@@ -398,34 +480,43 @@ get_xen_info_arm64(void)
 int
 get_versiondep_info_arm64(void)
 {
-	ulong _stext;
-
-	_stext = get_stext_symbol();
-	if (!_stext) {
-		ERRMSG("Can't get the symbol of _stext.\n");
+	if (NUMBER(VA_BITS) != NOT_FOUND_NUMBER) {
+		va_bits = NUMBER(VA_BITS);
+		DEBUG_MSG("va_bits      : %d (vmcoreinfo)\n", va_bits);
+	} else if (get_va_bits_from_stext_arm64() == FALSE) {
+		ERRMSG("Can't determine va_bits.\n");
 		return FALSE;
 	}
 
-	/* Derive va_bits as per arch/arm64/Kconfig */
-	if ((_stext & PAGE_OFFSET_36) == PAGE_OFFSET_36) {
-		va_bits = 36;
-	} else if ((_stext & PAGE_OFFSET_39) == PAGE_OFFSET_39) {
-		va_bits = 39;
-	} else if ((_stext & PAGE_OFFSET_42) == PAGE_OFFSET_42) {
-		va_bits = 42;
-	} else if ((_stext & PAGE_OFFSET_47) == PAGE_OFFSET_47) {
-		va_bits = 47;
-	} else if ((_stext & PAGE_OFFSET_48) == PAGE_OFFSET_48) {
-		va_bits = 48;
+	/*
+	 * See TCR_EL1, Translation Control Register (EL1) register
+	 * description in the ARMv8 Architecture Reference Manual.
+	 * Basically, we can use the TCR_EL1.T1SZ value to determine
+	 * the virtual addressing range supported in the kernel-space
+	 * (i.e. vabits_actual) since Linux 5.9.
+	 */
+	if (NUMBER(TCR_EL1_T1SZ) != NOT_FOUND_NUMBER) {
+		vabits_actual = 64 - NUMBER(TCR_EL1_T1SZ);
+		DEBUG_MSG("vabits_actual : %d (vmcoreinfo)\n", vabits_actual);
+	} else if ((va_bits == 52) && (SYMBOL(mem_section) != NOT_FOUND_SYMBOL)) {
+		/*
+		 * Linux 5.4 through 5.10 have the following linear space:
+		 *   48-bit: 0xffff000000000000 - 0xffff7fffffffffff
+		 *   52-bit: 0xfff0000000000000 - 0xfff7ffffffffffff
+		 * and SYMBOL(mem_section) should be in linear space if
+		 * the kernel is configured with COMFIG_SPARSEMEM_EXTREME=y.
+		 */
+		if (SYMBOL(mem_section) & (1UL << (va_bits - 1)))
+			vabits_actual = 48;
+		else
+			vabits_actual = 52;
+		DEBUG_MSG("vabits_actual : %d (guess from mem_section)\n", vabits_actual);
 	} else {
-		ERRMSG("Cannot find a proper _stext for calculating VA_BITS\n");
-		return FALSE;
+		vabits_actual = va_bits;
+		DEBUG_MSG("vabits_actual : %d (same as va_bits)\n", vabits_actual);
 	}
 
-	info->page_offset = (0xffffffffffffffffUL) << (va_bits - 1);
-
-	DEBUG_MSG("va_bits      : %d\n", va_bits);
-	DEBUG_MSG("page_offset  : %lx\n", info->page_offset);
+	get_page_offset_arm64();
 
 	return TRUE;
 }

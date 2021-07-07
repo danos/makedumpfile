@@ -48,6 +48,8 @@ char filename_stdout[] = FILENAME_STDOUT;
 static unsigned long long	cache_hit;
 static unsigned long long	cache_miss;
 
+static unsigned long long	write_bytes;
+
 static void first_cycle(mdf_pfn_t start, mdf_pfn_t max, struct cycle *cycle)
 {
 	cycle->start_pfn = round(start, info->pfn_cyclic);
@@ -1159,7 +1161,10 @@ check_release(void)
 	if (SYMBOL(system_utsname) != NOT_FOUND_SYMBOL) {
 		utsname = SYMBOL(system_utsname);
 	} else if (SYMBOL(init_uts_ns) != NOT_FOUND_SYMBOL) {
-		utsname = SYMBOL(init_uts_ns) + sizeof(int);
+		if (OFFSET(uts_namespace.name) != NOT_FOUND_STRUCTURE)
+			utsname = SYMBOL(init_uts_ns) + OFFSET(uts_namespace.name);
+		else
+			utsname = SYMBOL(init_uts_ns) + sizeof(int);
 	} else {
 		ERRMSG("Can't get the symbol of system_utsname.\n");
 		return FALSE;
@@ -1369,6 +1374,8 @@ open_dump_file(void)
 	if (info->flag_flatten) {
 		fd = STDOUT_FILENO;
 		info->name_dumpfile = filename_stdout;
+	} else if (info->flag_dry_run) {
+		fd = -1;
 	} else if ((fd = open(info->name_dumpfile, open_flags,
 	    S_IRUSR|S_IWUSR)) < 0) {
 		ERRMSG("Can't open the dump file(%s). %s\n",
@@ -1555,6 +1562,7 @@ get_symbol_info(void)
 	SYMBOL_INIT(node_data, "node_data");
 	SYMBOL_INIT(pgdat_list, "pgdat_list");
 	SYMBOL_INIT(contig_page_data, "contig_page_data");
+	SYMBOL_INIT(prb, "prb");
 	SYMBOL_INIT(log_buf, "log_buf");
 	SYMBOL_INIT(log_buf_len, "log_buf_len");
 	SYMBOL_INIT(log_end, "log_end");
@@ -1971,16 +1979,47 @@ get_structure_info(void)
 	OFFSET_INIT(elf64_phdr.p_memsz, "elf64_phdr", "p_memsz");
 
 	SIZE_INIT(printk_log, "printk_log");
-	if (SIZE(printk_log) != NOT_FOUND_STRUCTURE) {
+	SIZE_INIT(printk_ringbuffer, "printk_ringbuffer");
+	if ((SIZE(printk_ringbuffer) != NOT_FOUND_STRUCTURE)) {
+		info->flag_use_printk_ringbuffer = TRUE;
+		info->flag_use_printk_log = FALSE;
+
+		OFFSET_INIT(printk_ringbuffer.desc_ring, "printk_ringbuffer", "desc_ring");
+		OFFSET_INIT(printk_ringbuffer.text_data_ring, "printk_ringbuffer", "text_data_ring");
+
+		OFFSET_INIT(prb_desc_ring.count_bits, "prb_desc_ring", "count_bits");
+		OFFSET_INIT(prb_desc_ring.descs, "prb_desc_ring", "descs");
+		OFFSET_INIT(prb_desc_ring.infos, "prb_desc_ring", "infos");
+		OFFSET_INIT(prb_desc_ring.head_id, "prb_desc_ring", "head_id");
+		OFFSET_INIT(prb_desc_ring.tail_id, "prb_desc_ring", "tail_id");
+
+		SIZE_INIT(prb_desc, "prb_desc");
+		OFFSET_INIT(prb_desc.state_var, "prb_desc", "state_var");
+		OFFSET_INIT(prb_desc.text_blk_lpos, "prb_desc", "text_blk_lpos");
+
+		OFFSET_INIT(prb_data_blk_lpos.begin, "prb_data_blk_lpos", "begin");
+		OFFSET_INIT(prb_data_blk_lpos.next, "prb_data_blk_lpos", "next");
+
+		OFFSET_INIT(prb_data_ring.size_bits, "prb_data_ring", "size_bits");
+		OFFSET_INIT(prb_data_ring.data, "prb_data_ring", "data");
+
+		SIZE_INIT(printk_info, "printk_info");
+		OFFSET_INIT(printk_info.ts_nsec, "printk_info", "ts_nsec");
+		OFFSET_INIT(printk_info.text_len, "printk_info", "text_len");
+
+		OFFSET_INIT(atomic_long_t.counter, "atomic_long_t", "counter");
+	} else if (SIZE(printk_log) != NOT_FOUND_STRUCTURE) {
 		/*
 		 * In kernel 3.11-rc4 the log structure name was renamed
 		 * to "printk_log".
 		 */
+		info->flag_use_printk_ringbuffer = FALSE;
 		info->flag_use_printk_log = TRUE;
 		OFFSET_INIT(printk_log.ts_nsec, "printk_log", "ts_nsec");
 		OFFSET_INIT(printk_log.len, "printk_log", "len");
 		OFFSET_INIT(printk_log.text_len, "printk_log", "text_len");
 	} else {
+		info->flag_use_printk_ringbuffer = FALSE;
 		info->flag_use_printk_log = FALSE;
 		SIZE_INIT(printk_log, "log");
 		OFFSET_INIT(printk_log.ts_nsec, "log", "ts_nsec");
@@ -2007,6 +2046,11 @@ get_structure_info(void)
 	 */
 	SIZE_INIT(cpu_spec, "cpu_spec");
 	OFFSET_INIT(cpu_spec.mmu_features, "cpu_spec", "mmu_features");
+
+	/*
+	 * Get offsets of the uts_namespace's members.
+	 */
+	OFFSET_INIT(uts_namespace.name, "uts_namespace", "name");
 
 	return TRUE;
 }
@@ -2077,7 +2121,10 @@ get_str_osrelease_from_vmlinux(void)
 	if (SYMBOL(system_utsname) != NOT_FOUND_SYMBOL) {
 		utsname = SYMBOL(system_utsname);
 	} else if (SYMBOL(init_uts_ns) != NOT_FOUND_SYMBOL) {
-		utsname = SYMBOL(init_uts_ns) + sizeof(int);
+		if (OFFSET(uts_namespace.name) != NOT_FOUND_STRUCTURE)
+			utsname = SYMBOL(init_uts_ns) + OFFSET(uts_namespace.name);
+		else
+			utsname = SYMBOL(init_uts_ns) + sizeof(int);
 	} else {
 		ERRMSG("Can't get the symbol of system_utsname.\n");
 		return FALSE;
@@ -2191,6 +2238,7 @@ write_vmcoreinfo_data(void)
 	WRITE_SYMBOL("node_data", node_data);
 	WRITE_SYMBOL("pgdat_list", pgdat_list);
 	WRITE_SYMBOL("contig_page_data", contig_page_data);
+	WRITE_SYMBOL("prb", prb);
 	WRITE_SYMBOL("log_buf", log_buf);
 	WRITE_SYMBOL("log_buf_len", log_buf_len);
 	WRITE_SYMBOL("log_end", log_end);
@@ -2222,7 +2270,11 @@ write_vmcoreinfo_data(void)
 	WRITE_STRUCTURE_SIZE("node_memblk_s", node_memblk_s);
 	WRITE_STRUCTURE_SIZE("nodemask_t", nodemask_t);
 	WRITE_STRUCTURE_SIZE("pageflags", pageflags);
-	if (info->flag_use_printk_log)
+	if (info->flag_use_printk_ringbuffer) {
+		WRITE_STRUCTURE_SIZE("printk_ringbuffer", printk_ringbuffer);
+		WRITE_STRUCTURE_SIZE("prb_desc", prb_desc);
+		WRITE_STRUCTURE_SIZE("printk_info", printk_info);
+	} else if (info->flag_use_printk_log)
 		WRITE_STRUCTURE_SIZE("printk_log", printk_log);
 	else
 		WRITE_STRUCTURE_SIZE("log", printk_log);
@@ -2268,7 +2320,30 @@ write_vmcoreinfo_data(void)
 	WRITE_MEMBER_OFFSET("vm_struct.addr", vm_struct.addr);
 	WRITE_MEMBER_OFFSET("vmap_area.va_start", vmap_area.va_start);
 	WRITE_MEMBER_OFFSET("vmap_area.list", vmap_area.list);
-	if (info->flag_use_printk_log) {
+	if (info->flag_use_printk_ringbuffer) {
+		WRITE_MEMBER_OFFSET("printk_ringbuffer.desc_ring", printk_ringbuffer.desc_ring);
+		WRITE_MEMBER_OFFSET("printk_ringbuffer.text_data_ring", printk_ringbuffer.text_data_ring);
+
+		WRITE_MEMBER_OFFSET("prb_desc_ring.count_bits", prb_desc_ring.count_bits);
+		WRITE_MEMBER_OFFSET("prb_desc_ring.descs", prb_desc_ring.descs);
+		WRITE_MEMBER_OFFSET("prb_desc_ring.infos", prb_desc_ring.infos);
+		WRITE_MEMBER_OFFSET("prb_desc_ring.head_id", prb_desc_ring.head_id);
+		WRITE_MEMBER_OFFSET("prb_desc_ring.tail_id", prb_desc_ring.tail_id);
+
+		WRITE_MEMBER_OFFSET("prb_desc.state_var", prb_desc.state_var);
+		WRITE_MEMBER_OFFSET("prb_desc.text_blk_lpos", prb_desc.text_blk_lpos);
+
+		WRITE_MEMBER_OFFSET("prb_data_blk_lpos.begin", prb_data_blk_lpos.begin);
+		WRITE_MEMBER_OFFSET("prb_data_blk_lpos.next", prb_data_blk_lpos.next);
+
+		WRITE_MEMBER_OFFSET("prb_data_ring.size_bits", prb_data_ring.size_bits);
+		WRITE_MEMBER_OFFSET("prb_data_ring.data", prb_data_ring.data);
+
+		WRITE_MEMBER_OFFSET("printk_info.ts_nsec", printk_info.ts_nsec);
+		WRITE_MEMBER_OFFSET("printk_info.text_len", printk_info.text_len);
+
+		WRITE_MEMBER_OFFSET("atomic_long_t.counter", atomic_long_t.counter);
+	} else if (info->flag_use_printk_log) {
 		WRITE_MEMBER_OFFSET("printk_log.ts_nsec", printk_log.ts_nsec);
 		WRITE_MEMBER_OFFSET("printk_log.len", printk_log.len);
 		WRITE_MEMBER_OFFSET("printk_log.text_len", printk_log.text_len);
@@ -2284,6 +2359,7 @@ write_vmcoreinfo_data(void)
 	WRITE_MEMBER_OFFSET("vmemmap_backing.list", vmemmap_backing.list);
 	WRITE_MEMBER_OFFSET("mmu_psize_def.shift", mmu_psize_def.shift);
 	WRITE_MEMBER_OFFSET("cpu_spec.mmu_features", cpu_spec.mmu_features);
+	WRITE_MEMBER_OFFSET("uts_namespace.name", uts_namespace.name);
 
 	if (SYMBOL(node_data) != NOT_FOUND_SYMBOL)
 		WRITE_ARRAY_LENGTH("node_data", node_data);
@@ -2323,6 +2399,7 @@ write_vmcoreinfo_data(void)
 	WRITE_NUMBER("HUGETLB_PAGE_DTOR", HUGETLB_PAGE_DTOR);
 #ifdef __aarch64__
 	WRITE_NUMBER("VA_BITS", VA_BITS);
+	/* WRITE_NUMBER("TCR_EL1_T1SZ", TCR_EL1_T1SZ); should not exists */
 	WRITE_NUMBER_UNSIGNED("PHYS_OFFSET", PHYS_OFFSET);
 	WRITE_NUMBER_UNSIGNED("kimage_voffset", kimage_voffset);
 #endif
@@ -2606,6 +2683,7 @@ read_vmcoreinfo(void)
 	READ_SYMBOL("node_data", node_data);
 	READ_SYMBOL("pgdat_list", pgdat_list);
 	READ_SYMBOL("contig_page_data", contig_page_data);
+	READ_SYMBOL("prb", prb);
 	READ_SYMBOL("log_buf", log_buf);
 	READ_SYMBOL("log_buf_len", log_buf_len);
 	READ_SYMBOL("log_end", log_end);
@@ -2682,14 +2760,46 @@ read_vmcoreinfo(void)
 	READ_MEMBER_OFFSET("vmemmap_backing.list", vmemmap_backing.list);
 	READ_MEMBER_OFFSET("mmu_psize_def.shift", mmu_psize_def.shift);
 	READ_MEMBER_OFFSET("cpu_spec.mmu_features", cpu_spec.mmu_features);
+	READ_MEMBER_OFFSET("uts_namespace.name", uts_namespace.name);
 
 	READ_STRUCTURE_SIZE("printk_log", printk_log);
-	if (SIZE(printk_log) != NOT_FOUND_STRUCTURE) {
+	READ_STRUCTURE_SIZE("printk_ringbuffer", printk_ringbuffer);
+	if (SIZE(printk_ringbuffer) != NOT_FOUND_STRUCTURE) {
+		info->flag_use_printk_ringbuffer = TRUE;
+		info->flag_use_printk_log = FALSE;
+
+		READ_MEMBER_OFFSET("printk_ringbuffer.desc_ring", printk_ringbuffer.desc_ring);
+		READ_MEMBER_OFFSET("printk_ringbuffer.text_data_ring", printk_ringbuffer.text_data_ring);
+
+		READ_MEMBER_OFFSET("prb_desc_ring.count_bits", prb_desc_ring.count_bits);
+		READ_MEMBER_OFFSET("prb_desc_ring.descs", prb_desc_ring.descs);
+		READ_MEMBER_OFFSET("prb_desc_ring.infos", prb_desc_ring.infos);
+		READ_MEMBER_OFFSET("prb_desc_ring.head_id", prb_desc_ring.head_id);
+		READ_MEMBER_OFFSET("prb_desc_ring.tail_id", prb_desc_ring.tail_id);
+
+		READ_STRUCTURE_SIZE("prb_desc", prb_desc);
+		READ_MEMBER_OFFSET("prb_desc.state_var", prb_desc.state_var);
+		READ_MEMBER_OFFSET("prb_desc.text_blk_lpos", prb_desc.text_blk_lpos);
+
+		READ_MEMBER_OFFSET("prb_data_blk_lpos.begin", prb_data_blk_lpos.begin);
+		READ_MEMBER_OFFSET("prb_data_blk_lpos.next", prb_data_blk_lpos.next);
+
+		READ_MEMBER_OFFSET("prb_data_ring.size_bits", prb_data_ring.size_bits);
+		READ_MEMBER_OFFSET("prb_data_ring.data", prb_data_ring.data);
+
+		READ_STRUCTURE_SIZE("printk_info", printk_info);
+		READ_MEMBER_OFFSET("printk_info.ts_nsec", printk_info.ts_nsec);
+		READ_MEMBER_OFFSET("printk_info.text_len", printk_info.text_len);
+
+		READ_MEMBER_OFFSET("atomic_long_t.counter", atomic_long_t.counter);
+	} else if (SIZE(printk_log) != NOT_FOUND_STRUCTURE) {
+		info->flag_use_printk_ringbuffer = FALSE;
 		info->flag_use_printk_log = TRUE;
 		READ_MEMBER_OFFSET("printk_log.ts_nsec", printk_log.ts_nsec);
 		READ_MEMBER_OFFSET("printk_log.len", printk_log.len);
 		READ_MEMBER_OFFSET("printk_log.text_len", printk_log.text_len);
 	} else {
+		info->flag_use_printk_ringbuffer = FALSE;
 		info->flag_use_printk_log = FALSE;
 		READ_STRUCTURE_SIZE("log", printk_log);
 		READ_MEMBER_OFFSET("log.ts_nsec", printk_log.ts_nsec);
@@ -2729,6 +2839,7 @@ read_vmcoreinfo(void)
 	READ_NUMBER("KERNEL_IMAGE_SIZE", KERNEL_IMAGE_SIZE);
 #ifdef __aarch64__
 	READ_NUMBER("VA_BITS", VA_BITS);
+	READ_NUMBER("TCR_EL1_T1SZ", TCR_EL1_T1SZ);
 	READ_NUMBER_UNSIGNED("PHYS_OFFSET", PHYS_OFFSET);
 	READ_NUMBER_UNSIGNED("kimage_voffset", kimage_voffset);
 #endif
@@ -4606,6 +4717,11 @@ write_and_check_space(int fd, void *buf, size_t buf_size, char *file_name)
 {
 	int status, written_size = 0;
 
+	write_bytes += buf_size;
+
+	if (info->flag_dry_run)
+		return TRUE;
+
 	while (written_size < buf_size) {
 		status = write(fd, buf + written_size,
 				   buf_size - written_size);
@@ -4643,13 +4759,12 @@ write_buffer(int fd, off_t offset, void *buf, size_t buf_size, char *file_name)
 		}
 		if (!write_and_check_space(fd, &fdh, sizeof(fdh), file_name))
 			return FALSE;
-	} else {
-		if (lseek(fd, offset, SEEK_SET) == failed) {
-			ERRMSG("Can't seek the dump file(%s). %s\n",
-			    file_name, strerror(errno));
-			return FALSE;
-		}
+	} else if (!info->flag_dry_run &&
+		    lseek(fd, offset, SEEK_SET) == failed) {
+		ERRMSG("Can't seek the dump file(%s). %s\n", file_name, strerror(errno));
+		return FALSE;
 	}
+
 	if (!write_and_check_space(fd, buf, buf_size, file_name))
 		return FALSE;
 
@@ -5285,6 +5400,9 @@ dump_dmesg()
 	}
 	if (!initial())
 		return FALSE;
+
+	if ((SYMBOL(prb) != NOT_FOUND_SYMBOL))
+		return dump_lockless_dmesg();
 
 	if ((SYMBOL(log_buf) == NOT_FOUND_SYMBOL)
 	    || (SYMBOL(log_buf_len) == NOT_FOUND_SYMBOL)) {
@@ -9004,7 +9122,7 @@ close_dump_memory(void)
 void
 close_dump_file(void)
 {
-	if (info->flag_flatten)
+	if (info->flag_flatten || info->flag_dry_run)
 		return;
 
 	if (close(info->fd_dumpfile) < 0)
@@ -9888,6 +10006,7 @@ print_report(void)
 	REPORT_MSG("Memory Hole     : 0x%016llx\n", pfn_memhole);
 	REPORT_MSG("--------------------------------------------------\n");
 	REPORT_MSG("Total pages     : 0x%016llx\n", info->max_mapnr);
+	REPORT_MSG("Write bytes     : %llu\n", write_bytes);
 	REPORT_MSG("\n");
 	REPORT_MSG("Cache hit: %lld, miss: %lld", cache_hit, cache_miss);
 	if (cache_hit + cache_miss)
@@ -10877,6 +10996,11 @@ check_param_for_generating_vmcoreinfo(int argc, char *argv[])
 
 		return FALSE;
 
+	if (info->flag_dry_run) {
+		MSG("--dry-run cannot be used with -g.\n");
+		return FALSE;
+	}
+
 	return TRUE;
 }
 
@@ -10921,6 +11045,11 @@ check_param_for_reassembling_dumpfile(int argc, char *argv[])
 	    || info->flag_exclude_xen_dom || info->flag_split)
 		return FALSE;
 
+	if (info->flag_dry_run) {
+		MSG("--dry-run cannot be used with --reassemble.\n");
+		return FALSE;
+	}
+
 	if ((info->splitting_info
 	    = malloc(sizeof(struct splitting_info) * info->num_dumpfile))
 	    == NULL) {
@@ -10948,6 +11077,11 @@ check_param_for_creating_dumpfile(int argc, char *argv[])
 	    || (info->flag_read_vmcoreinfo && info->name_vmlinux)
 	    || (info->flag_read_vmcoreinfo && info->name_xen_syms))
 		return FALSE;
+
+	if (info->flag_dry_run && info->flag_dmesg) {
+		MSG("--dry-run cannot be used with --dump-dmesg.\n");
+		return FALSE;
+	}
 
 	if (info->flag_flatten && info->flag_split)
 		return FALSE;
@@ -11318,6 +11452,7 @@ int show_mem_usage(void)
 {
 	uint64_t vmcoreinfo_addr, vmcoreinfo_len;
 	struct cycle cycle = {0};
+	int vmcoreinfo = FALSE;
 
 	if (!is_crashkernel_mem_reserved()) {
 		ERRMSG("No memory is reserved for crashkernel!\n");
@@ -11329,8 +11464,21 @@ int show_mem_usage(void)
 	if (!open_files_for_creating_dumpfile())
 		return FALSE;
 
-	if (!get_elf_loads(info->fd_memory, info->name_memory))
+	if (!get_elf_info(info->fd_memory, info->name_memory))
 		return FALSE;
+
+	/*
+	 * /proc/kcore on Linux 4.19 and later kernels have vmcoreinfo note in
+	 * NOTE segment.  See commit 23c85094fe18.
+	 */
+	if (has_vmcoreinfo()) {
+		off_t offset;
+		unsigned long size;
+
+		get_vmcoreinfo(&offset, &size);
+		vmcoreinfo = read_vmcoreinfo_from_vmcore(offset, size, FALSE);
+		DEBUG_MSG("Read vmcoreinfo from NOTE segment: %d\n", vmcoreinfo);
+	}
 
 	if (!get_page_offset())
 		return FALSE;
@@ -11339,11 +11487,13 @@ int show_mem_usage(void)
 	if (!get_phys_base())
 		return FALSE;
 
-	if (!get_sys_kernel_vmcoreinfo(&vmcoreinfo_addr, &vmcoreinfo_len))
-		return FALSE;
+	if (!vmcoreinfo) {
+		if (!get_sys_kernel_vmcoreinfo(&vmcoreinfo_addr, &vmcoreinfo_len))
+			return FALSE;
 
-	if (!set_kcore_vmcoreinfo(vmcoreinfo_addr, vmcoreinfo_len))
-		return FALSE;
+		if (!set_kcore_vmcoreinfo(vmcoreinfo_addr, vmcoreinfo_len))
+			return FALSE;
+	}
 
 	if (!initial())
 		return FALSE;
@@ -11412,13 +11562,15 @@ static struct option longopts[] = {
 	{"work-dir", required_argument, NULL, OPT_WORKING_DIR},
 	{"num-threads", required_argument, NULL, OPT_NUM_THREADS},
 	{"check-params", no_argument, NULL, OPT_CHECK_PARAMS},
+	{"dry-run", no_argument, NULL, OPT_DRY_RUN},
+	{"show-stats", no_argument, NULL, OPT_SHOW_STATS},
 	{0, 0, 0, 0}
 };
 
 int
 main(int argc, char *argv[])
 {
-	int i, opt, flag_debug = FALSE;
+	int i, opt, flag_debug = FALSE, flag_show_stats = FALSE;
 
 	if ((info = calloc(1, sizeof(struct DumpInfo))) == NULL) {
 		ERRMSG("Can't allocate memory for the pagedesc cache. %s.\n",
@@ -11578,6 +11730,12 @@ main(int argc, char *argv[])
 			info->flag_check_params = TRUE;
 			message_level = DEFAULT_MSG_LEVEL;
 			break;
+		case OPT_DRY_RUN:
+			info->flag_dry_run = TRUE;
+			break;
+		case OPT_SHOW_STATS:
+			flag_show_stats = TRUE;
+			break;
 		case '?':
 			MSG("Commandline parameter is invalid.\n");
 			MSG("Try `makedumpfile --help' for more information.\n");
@@ -11586,6 +11744,9 @@ main(int argc, char *argv[])
 	}
 	if (flag_debug)
 		message_level |= ML_PRINT_DEBUG_MSG;
+
+	if (flag_show_stats)
+		message_level |= ML_PRINT_REPORT_MSG;
 
 	if (info->flag_check_params)
 		/* suppress debugging messages */

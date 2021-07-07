@@ -308,6 +308,14 @@ print_usage(void)
 	MSG("      the crashkernel range, then calculates the page number of different kind per\n");
 	MSG("      vmcoreinfo. So currently /proc/kcore need be specified explicitly.\n");
 	MSG("\n");
+	MSG("  [--dry-run]:\n");
+	MSG("      Do not write the output dump file while still performing operations specified\n");
+	MSG("      by other options.  This option cannot be used with --dump-dmesg, --reassemble\n");
+	MSG("      and -g options.\n");
+	MSG("\n");
+	MSG("  [--show-stats]:\n");
+	MSG("      Set message-level to print report messages\n");
+	MSG("\n");
 	MSG("  [-D]:\n");
 	MSG("      Print debugging message.\n");
 	MSG("\n");

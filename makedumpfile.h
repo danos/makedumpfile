@@ -495,7 +495,7 @@ do { \
 #define KVER_MIN_SHIFT 16
 #define KERNEL_VERSION(x,y,z) (((x) << KVER_MAJ_SHIFT) | ((y) << KVER_MIN_SHIFT) | (z))
 #define OLDEST_VERSION		KERNEL_VERSION(2, 6, 15) /* linux-2.6.15 */
-#define LATEST_VERSION		KERNEL_VERSION(5, 9, 4) /* linux-5.9.4 */
+#define LATEST_VERSION		KERNEL_VERSION(5, 12, 1) /* linux-5.12.1 */
 
 /*
  * vmcoreinfo in /proc/vmcore
@@ -958,6 +958,39 @@ typedef unsigned long pgd_t;
 
 #endif          /* sparc64 */
 
+#ifdef __mips64__ /* mips64 */
+#define KVBASE			PAGE_OFFSET
+#define _SECTION_SIZE_BITS	(28)
+#define _MAX_PHYSMEM_BITS	(48)
+#define _PAGE_PRESENT		(1 << 0)
+#define _PAGE_HUGE		(1 << 4)
+
+typedef unsigned long pte_t;
+typedef unsigned long pmd_t;
+typedef unsigned long pgd_t;
+
+#define PAGE_MASK		(~(PAGESIZE() - 1))
+#define PMD_MASK		(~(PMD_SIZE - 1))
+#define PMD_SHIFT		((PAGESHIFT() - 3) * 2 + 3)
+#define PMD_SIZE		(1UL << PMD_SHIFT)
+#define PGDIR_SHIFT		((PAGESHIFT() - 3) * 3 + 3)
+#define PTRS_PER_PTE		(1 << (PAGESHIFT() - 3))
+#define PTRS_PER_PMD		PTRS_PER_PTE
+#define PTRS_PER_PGD		PTRS_PER_PTE
+
+#define pte_index(vaddr)		(((vaddr) >> PAGESHIFT()) & (PTRS_PER_PTE - 1))
+#define pmd_page_paddr(pmd)		(pmd & (int32_t)PAGE_MASK)
+#define pte_offset(dir, vaddr)		((pte_t *)pmd_page_paddr((*dir)) + pte_index(vaddr))
+
+#define pmd_index(vaddr)		(((vaddr) >> PMD_SHIFT) & (PTRS_PER_PMD - 1))
+#define pgd_page_paddr(pgd)		(pgd & (int32_t)PAGE_MASK)
+#define pmd_offset(pgd, vaddr)		((pmd_t *)pgd_page_paddr((*pgd)) + pmd_index(vaddr))
+
+#define pgd_index(vaddr)		(((vaddr) >> PGDIR_SHIFT) & (PTRS_PER_PGD - 1))
+#define pgd_offset(pgdir, vaddr)	((pgd_t *)(pgdir) + pgd_index(vaddr))
+
+#endif		/* mips64 */
+
 /*
  * The function of dependence on machine
  */
@@ -1106,11 +1139,28 @@ unsigned long long vaddr_to_paddr_sparc64(unsigned long vaddr);
 #define get_machdep_info()      TRUE
 #define get_phys_base()         get_phys_base_sparc64()
 #define get_versiondep_info()   get_versiondep_info_sparc64()
+#define get_kaslr_offset(X)     stub_false()
 #define vaddr_to_paddr(X)       vaddr_to_paddr_sparc64(X)
 #define paddr_to_vaddr(X)	paddr_to_vaddr_general(X)
 #define is_phys_addr(X)		stub_true_ul(X)
 #define arch_crashkernel_mem_size()	stub_false()
 #endif		/* sparc64 */
+
+#ifdef __mips64__ /* mips64 */
+int get_phys_base_mips64(void);
+int get_machdep_info_mips64(void);
+int get_versiondep_info_mips64(void);
+unsigned long long vaddr_to_paddr_mips64(unsigned long vaddr);
+#define find_vmemmap()		stub_false()
+#define get_phys_base() 	get_phys_base_mips64()
+#define get_machdep_info()	get_machdep_info_mips64()
+#define get_versiondep_info()	get_versiondep_info_mips64()
+#define get_kaslr_offset(X)	stub_false()
+#define vaddr_to_paddr(X)	vaddr_to_paddr_mips64(X)
+#define paddr_to_vaddr(X)	paddr_to_vaddr_general(X)
+#define is_phys_addr(X) 	stub_true_ul(X)
+#define arch_crashkernel_mem_size()	stub_false()
+#endif		/* mips64 */
 
 typedef unsigned long long mdf_pfn_t;
 
@@ -1317,10 +1367,12 @@ struct DumpInfo {
 	int             flag_partial_dmesg;  /* dmesg dump only from the last cleared index*/
 	int             flag_mem_usage;  /*show the page number of memory in different use*/
 	int		flag_use_printk_log; /* did we read printk_log symbol name? */
+	int		flag_use_printk_ringbuffer; /* using lockless printk ringbuffer? */
 	int		flag_nospace;	     /* the flag of "No space on device" error */
 	int		flag_vmemmap;        /* kernel supports vmemmap address space */
 	int		flag_excludevm;      /* -e - excluding unused vmemmap pages */
 	int		flag_use_count;      /* _refcount is named _count in struct page */
+	int		flag_dry_run;        /* do not create a vmcore file */
 	unsigned long	vaddr_for_vtop;      /* virtual address for debugging */
 	long		page_size;           /* size of page */
 	long		page_shift;
@@ -1602,6 +1654,7 @@ struct symbol_table {
 	unsigned long long	node_data;
 	unsigned long long	pgdat_list;
 	unsigned long long	contig_page_data;
+	unsigned long long	prb;
 	unsigned long long	log_buf;
 	unsigned long long	log_buf_len;
 	unsigned long long	log_end;
@@ -1690,6 +1743,13 @@ struct size_table {
 	long	printk_log;
 
 	/*
+	 * for lockless printk ringbuffer
+	 */
+	long	printk_ringbuffer;
+	long	prb_desc;
+	long	printk_info;
+
+	/*
 	 * for Xen extraction
 	 */
 	long	page_info;
@@ -1719,6 +1779,8 @@ struct size_table {
 	long	cpu_spec;
 
 	long	pageflags;
+
+	long	uts_namespace;
 };
 
 struct offset_table {
@@ -1865,6 +1927,52 @@ struct offset_table {
 	} printk_log;
 
 	/*
+	 * for lockless printk ringbuffer
+	 */
+	struct printk_ringbuffer_s {
+		long desc_ring;
+		long text_data_ring;
+		long fail;
+	} printk_ringbuffer;
+
+	struct prb_desc_ring_s {
+		long count_bits;
+		long descs;
+		long infos;
+		long head_id;
+		long tail_id;
+	} prb_desc_ring;
+
+	struct prb_desc_s {
+		long state_var;
+		long text_blk_lpos;
+	} prb_desc;
+
+	struct prb_data_blk_lpos_s {
+		long begin;
+		long next;
+	} prb_data_blk_lpos;
+
+	struct printk_info_s {
+		long seq;
+		long ts_nsec;
+		long text_len;
+		long caller_id;
+		long dev_info;
+	} printk_info;
+
+	struct prb_data_ring_s {
+		long size_bits;
+		long data;
+		long head_lpos;
+		long tail_lpos;
+	} prb_data_ring;
+
+	struct atomic_long_t_s {
+		long counter;
+	} atomic_long_t;
+
+	/*
 	 * symbols on ppc64 arch
 	 */
 	struct mmu_psize_def_s {
@@ -1880,6 +1988,10 @@ struct offset_table {
 	struct cpu_spec_s {
 		long	mmu_features;
 	} cpu_spec;
+
+	struct uts_namespace_s {
+		long	name;
+	} uts_namespace;
 };
 
 /*
@@ -1938,6 +2050,7 @@ struct number_table {
 	long	KERNEL_IMAGE_SIZE;
 #ifdef __aarch64__
 	long 	VA_BITS;
+	long	TCR_EL1_T1SZ;
 	unsigned long	PHYS_OFFSET;
 	unsigned long	kimage_voffset;
 #endif
@@ -2167,6 +2280,12 @@ int get_xen_info_ia64(void);
 #define get_xen_info_arch(X) FALSE
 #endif	/* sparc64 */
 
+#ifdef __mips64__ /* mips64 */
+#define kvtop_xen(X)	FALSE
+#define get_xen_basic_info_arch(X) FALSE
+#define get_xen_info_arch(X) FALSE
+#endif	/* mips64 */
+
 struct cycle {
 	mdf_pfn_t start_pfn;
 	mdf_pfn_t end_pfn;
@@ -2364,6 +2483,8 @@ struct elf_prstatus {
 #define OPT_NUM_THREADS         OPT_START+16
 #define OPT_PARTIAL_DMESG       OPT_START+17
 #define OPT_CHECK_PARAMS        OPT_START+18
+#define OPT_DRY_RUN             OPT_START+19
+#define OPT_SHOW_STATS          OPT_START+20
 
 /*
  * Function Prototype.
@@ -2389,5 +2510,8 @@ ulong htol(char *s, int flags);
 int hexadecimal(char *s, int count);
 int decimal(char *s, int count);
 int file_exists(char *file);
+
+int open_dump_file(void);
+int dump_lockless_dmesg(void);
 
 #endif /* MAKEDUMPFILE_H */

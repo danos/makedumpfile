@@ -1,4 +1,4 @@
-.TH MAKEDUMPFILE 8 "16 Nov 2020" "makedumpfile v1.6.8" "Linux System Administrator's Manual"
+.TH MAKEDUMPFILE 8 "13 May 2021" "makedumpfile v1.6.9" "Linux System Administrator's Manual"
 .SH NAME
 makedumpfile \- make a small dumpfile of kdump
 .SH SYNOPSIS
@@ -636,6 +636,17 @@ Show the version of makedumpfile.
 \fB\-\-check-params\fR
 Only check whether the command-line parameters are valid or not, and exit.
 Preferable to be given as the first parameter.
+
+.TP
+\fB\-\-dry-run\fR
+Do not write the output dump file while still performing operations specified
+by other options.
+This option cannot be used with the --dump-dmesg, --reassemble and -g options.
+
+.TP
+\fB\-\-show-stats\fR
+Display report messages. This is an alternative to enabling bit 4 in the level
+provided to --message-level.
 
 .SH ENVIRONMENT VARIABLES
 
