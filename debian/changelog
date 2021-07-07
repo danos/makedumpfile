@@ -1,3 +1,9 @@
+makedumpfile (1:1.6.9-1) UNRELEASED; urgency=medium
+
+  * Update to new upstream version 1:1.6.9.
+
+ -- dann frazier <dannf@debian.org>  Wed, 07 Jul 2021 17:42:22 -0600
+
 makedumpfile (1:1.6.8-4) unstable; urgency=medium
 
   [ Ioanna Alifieraki ]
