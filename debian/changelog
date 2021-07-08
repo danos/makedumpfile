@@ -1,8 +1,8 @@
-makedumpfile (1.6.9-1) experimental; urgency=medium
+makedumpfile (1:1.6.9-1) experimental; urgency=medium
 
   * Update to new upstream version 1.6.9.
 
- -- dann frazier <dannf@debian.org>  Wed, 07 Jul 2021 13:27:41 -0600
+ -- dann frazier <dannf@debian.org>  Thu, 08 Jul 2021 07:29:19 -0600
 
 makedumpfile (1:1.6.8-4) unstable; urgency=medium
 
